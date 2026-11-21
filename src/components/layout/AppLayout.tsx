@@ -1,19 +1,23 @@
 import { useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '@/app/auth'
-import { PageLoader } from '@/components/ui'
+import { ErrorState, PageLoader } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
 export function AppLayout() {
-  const { user, loading } = useAuth()
+  const { user, loading, hasSession, projects, loadError, refresh } = useAuth()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
 
   if (loading) return <PageLoader />
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  if (!hasSession) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  if (loadError) return <ErrorState message={loadError} onRetry={() => void refresh()} />
+  // Con sesión pero sin empresa: primero hay que crear una (o aceptar una invitación).
+  if (!user && projects.length === 0) return <Navigate to="/onboarding" replace />
+  if (!user) return <PageLoader />
 
   return (
     <div className="flex h-full gap-4 p-4">

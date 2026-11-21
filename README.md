@@ -1,74 +1,53 @@
 # FlowCommerce CRM · Frontend
 
-Interfaz web del CRM de FlowCommerce para la conversión de leads y la atención con respuestas asistidas por IA.
+Interfaz web del CRM (diseño del equipo de frontend), conectada a la API de FlowCommerce y a Supabase Auth.
 
-**Stack:** React 19 · TypeScript · Vite · Tailwind CSS 4 · React Router · TanStack Query · Recharts · dnd-kit
+**Stack:** React 19 · TypeScript · Vite · Tailwind CSS 4 · React Router · TanStack Query · Supabase JS · Recharts · dnd-kit
 
 ## Puesta en marcha
 
 ```bash
 npm install
-cp .env.example .env
-npm run dev
+cp .env.example .env      # en Windows: copy .env.example .env
+npm run dev               # http://localhost:3001
 ```
 
-La aplicación abre en <http://localhost:5173>. Con `VITE_USE_MOCKS=true` (valor por defecto) funciona sin
-backend y acepta cualquier correo y contraseña.
+La API ([FlowCommerce](https://github.com/diegogv17/FlowCommerce), `pnpm start:dev`, puerto 3000) debe estar corriendo con `CORS_ORIGINS=http://localhost:3001`. Este frontend es el mismo que vive en `web/` de ese repositorio; los cambios se hacen allí y se sincronizan aquí.
+
+| Variable | Ejemplo |
+| --- | --- |
+| `VITE_API_URL` | `http://localhost:3000/api/v1` |
+| `VITE_SUPABASE_URL` | `https://<proyecto>.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | anon / publishable key (es pública) |
+
+La clave de Gemini **nunca** va aquí: solo la conoce la API (`GEMINI_API_KEY` en su `.env`).
 
 | Comando | Descripción |
 | --- | --- |
 | `npm run dev` | Servidor de desarrollo |
 | `npm run build` | Revisión de tipos + build de producción en `dist/` |
-| `npm run preview` | Sirve el build localmente |
-| `npm run lint` | Análisis estático |
+| `npm run lint` | Análisis estático (oxlint) |
+| `npm run test:e2e` | E2E con Playwright (la primera vez: `npx playwright install chromium`) |
 
-## Módulos
+## Cómo se conecta con el backend
 
-Dashboard · Leads (tabla, pipeline kanban y ficha del lead) · Conversaciones con sugerencias de IA y panel del lead ·
-Cotizaciones (listado, creación manual o con IA y documento imprimible) · Clientes (listado y ficha) · Productos y servicios ·
-Notificaciones · Configuración (perfil, usuarios y asistente de IA).
+- **Sesión:** Supabase hace login/registro/recuperación (`src/lib/supabase.ts`). La API solo recibe `Authorization: Bearer <token>`.
+- **Empresa activa:** casi todo vive en `/projects/:projectId/...`. `src/app/auth.tsx` carga el perfil y las empresas (`/users/me`, `/projects/my`) y fija la empresa activa; los servicios usan `pp('/leads')`.
+- **Servicios:** `src/services/*.service.ts` llaman a la API real y traducen sus formas a los tipos de la interfaz (`src/types/domain.ts`). Los mapeos de estados/fuentes están en `src/services/mappers/`.
+- **Datos que la API no guarda** (preferencias de IA, IA por chat): se guardan en el navegador y la pantalla lo indica.
 
-## Estructura
+## Pantallas
 
-```
-src/
-├── app/            Providers, rutas, autenticación y notificaciones
-├── components/
-│   ├── layout/     Sidebar, Topbar, layout principal, logotipo
-│   └── ui/         Componentes base (botones, formularios, tablas, modales…)
-├── config/         Variables de entorno
-├── features/       Una carpeta por módulo (pantallas y componentes propios)
-├── hooks/          Consultas y mutaciones (TanStack Query)
-├── lib/            Formatos (moneda, fechas), etiquetas y utilidades
-├── mocks/          Datos y servidor simulado en memoria
-├── services/       Capa de acceso a la API  ← punto de integración con el backend
-├── styles/         Tokens de marca y estilos globales
-└── types/          Modelos de dominio compartidos
-```
+Cuenta: login, registro, onboarding (crear empresa), invitación, solicitar acceso, recuperar/restablecer contraseña, `/auth/callback`.
+App: Dashboard · Leads (tabla, pipeline y ficha) · Conversaciones de WhatsApp con sugerencias e insight de IA · Asistente de IA (chat) · Cotizaciones (manual o con IA, aprobación, PDF, envío por correo) · Clientes · Productos y servicios · Notas y seguimientos · Notificaciones · Configuración (perfil, usuarios e invitaciones, empresa, IA).
 
-## Integración con el backend
+## Asistente de IA (`/asistente`)
 
-Toda la comunicación pasa por `src/services/`. Cada módulo tiene su archivo (`leads.service.ts`,
-`quotes.service.ts`, …) con funciones que llaman a un único cliente HTTP (`http.ts`), que ya se encarga del token,
-los errores y el cierre de sesión en 401.
+- **Streaming:** `useChat` de `@ai-sdk/react` consume `POST /projects/:id/assistant/chat` (protocolo *UI message stream* del Vercel AI SDK v6) y pinta la respuesta mientras llega. El transporte está en `src/features/assistant/chat-transport.ts`.
+- **Herramientas:** el asistente consulta leads, clientes, cotizaciones, catálogo, métricas y seguimientos con los permisos del usuario; la pantalla muestra cada consulta.
+- **Aprobación:** la única acción que escribe (programar un seguimiento) muestra una tarjeta para aprobar o descartar; nada se guarda sin ese clic. La aprobación va firmada por la API.
+- **Pruebas:** `e2e/assistant.spec.ts` (Playwright) cubre la respuesta en streaming, la aprobación y el rechazo, con la API y Supabase sustituidos a nivel de red.
 
-El contrato completo de endpoints está en [`docs/API.md`](docs/API.md). Para pasar de datos simulados a la API real:
+## Despliegue (Vercel)
 
-```bash
-# .env
-VITE_USE_MOCKS=false
-VITE_API_URL=https://api.tu-dominio.com/v1
-```
-
-## Identidad de marca
-
-Los tokens definidos en `src/styles/index.css` siguen el manual de marca:
-
-| Token | Color |
-| --- | --- |
-| Flow Blue | `#3B82F6` |
-| Navy | `#0F172A` |
-| Teal Green | `#10B981` |
-| Light Neutral | `#F3F6FA` |
-
-Tipografías: **Poppins** (títulos y KPIs), **IBM Plex Sans** (interfaz) e **IBM Plex Mono** (montos, folios y fechas).
+Root Directory: raíz del repositorio, Framework **Vite** (lo fija `vercel.json`, que además redirige todas las rutas a `index.html`). Variables: las tres `VITE_*` de arriba con los valores de producción.
