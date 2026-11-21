@@ -1,0 +1,55 @@
+# Integración continua del frontend: lint, tipos + build y E2E del asistente.
+# No usa secretos: la API, Supabase y Gemini se sustituyen en las pruebas.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Lint, tipos, build y E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Valores de ejemplo: el build no se conecta a nada, solo los incrusta.
+      VITE_API_URL: https://api.example.com/api/v1
+      VITE_SUPABASE_URL: https://example.supabase.co
+      VITE_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      # npm ci: instala exactamente package-lock.json (falla si no coincide).
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Lint (oxlint)
+        run: npm run lint
+      - name: Tipos + build
+        run: npm run build
+      - name: Instalar Chromium para Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Pruebas E2E
+        run: npm run test:e2e
+      - name: Subir reporte de Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
