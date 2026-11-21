@@ -8,11 +8,12 @@ import {
   PanelLeftOpen,
   Package,
   Settings,
+  Sparkles,
   Users,
   UserRound,
 } from 'lucide-react'
 import { useAuth } from '@/app/auth'
-import { useConversations, useLeads } from '@/hooks/queries'
+import { useConversationsUnread, useLeads } from '@/hooks/queries'
 import { cn } from '@/lib/cn'
 import { Avatar } from '@/components/ui'
 import { Logo } from './Logo'
@@ -24,16 +25,17 @@ interface Props {
 }
 
 export function Sidebar({ collapsed, onToggle, onNavigate }: Props) {
-  const { user, logout } = useAuth()
+  const { user, logout, project, projects, selectProject } = useAuth()
   const leads = useLeads({ pageSize: 1 })
-  const conversations = useConversations({})
-  const unread = (conversations.data ?? []).reduce((a, c) => a + c.unread, 0)
+  // Conversaciones con mensajes sin leer (GET /conversations/unread-count)
+  const unread = useConversationsUnread().data?.conversations ?? 0
   const leadTotal = leads.data?.meta.total
 
   const items = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/leads', label: 'Leads', icon: Users, badge: leadTotal, tone: 'green' },
     { to: '/conversaciones', label: 'Conversaciones', icon: MessagesSquare, badge: unread || undefined, tone: 'green' },
+    { to: '/asistente', label: 'Asistente', icon: Sparkles },
     { to: '/cotizaciones', label: 'Cotizaciones', icon: FileText },
     { to: '/clientes', label: 'Clientes', icon: UserRound },
     { to: '/productos', label: 'Productos y Servicios', icon: Package },
@@ -45,6 +47,29 @@ export function Sidebar({ collapsed, onToggle, onNavigate }: Props) {
       <div className={cn('flex items-center px-2 pt-2 pb-6', collapsed && 'justify-center')}>
         {collapsed ? <Logo variant="symbol" height={34} /> : <Logo height={30} />}
       </div>
+
+      {!collapsed && project && (
+        <div className="mb-4 px-1">
+          <p className="mb-1 px-2 text-[10.5px] font-semibold tracking-wide text-navy-300 uppercase">Empresa</p>
+          {projects.length > 1 ? (
+            <select
+              value={project.id}
+              onChange={(e) => {
+                if (e.target.value === '__new') window.location.assign('/onboarding?nueva=1')
+                else selectProject(e.target.value)
+              }}
+              className="h-9 w-full truncate rounded-xl border border-navy-100 bg-neutral-light px-2.5 text-[13px] font-semibold text-navy-700 focus:outline-none"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+              <option value="__new">+ Nueva empresa</option>
+            </select>
+          ) : (
+            <p className="truncate rounded-xl bg-neutral-light px-2.5 py-2 text-[13px] font-semibold text-navy-700" title={project.name}>{project.name}</p>
+          )}
+        </div>
+      )}
 
       <nav className="scroll-thin flex flex-1 flex-col gap-1 overflow-y-auto">
         {items.map(({ to, label, icon: Icon, badge, tone }) => (

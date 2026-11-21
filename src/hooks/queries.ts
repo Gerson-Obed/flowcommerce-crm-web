@@ -11,7 +11,9 @@ import {
   productsService,
   quotesService,
 } from '@/services'
-import type { AiSettings, LeadFilters, LeadStatus, NotificationKind, Paginated, Lead, QuoteStatus } from '@/types/domain'
+import { projectService } from '@/services/project.service'
+import { searchService } from '@/services/search.service'
+import type { AiSettings, LeadFilters, LeadStatus, NotificationKind, Paginated, Lead, QuoteStatus, ApiQuoteStatus } from '@/types/domain'
 
 /** Claves de caché centralizadas. */
 export const qk = {
@@ -67,6 +69,19 @@ export function useUpdateLead() {
   })
 }
 
+export function useDeleteLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: leadsService.remove,
+    onSuccess: (_d, id) => {
+      qc.removeQueries({ queryKey: qk.lead(id) })
+      qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: ['notes'] })
+      qc.invalidateQueries({ queryKey: qk.dashboard })
+    },
+  })
+}
+
 /** Cambia el estado de un lead con actualización optimista (kanban). */
 export function useUpdateLeadStatus() {
   const qc = useQueryClient()
@@ -82,16 +97,22 @@ export function useUpdateLeadStatus() {
       return { snapshots }
     },
     onError: (_e, _v, ctx) => ctx?.snapshots.forEach(([key, data]) => qc.setQueryData(key, data)),
-    onSettled: () => {
+    onSettled: (_d, _e, { id }) => {
       qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: qk.lead(id) })
+      qc.invalidateQueries({ queryKey: ['lead-activity', id] })
       qc.invalidateQueries({ queryKey: qk.dashboard })
     },
   })
 }
 
 /* Conversaciones e IA */
-export const useConversations = (params: { search?: string; channel?: string; leadId?: string }) =>
+export const useConversations = (params: { search?: string; channel?: string; leadId?: string; unread?: boolean }) =>
   useQuery({ queryKey: qk.conversations(params), queryFn: () => conversationsService.list(params), refetchInterval: 15_000 })
+
+/** Conversaciones con mensajes sin leer (globo del menú). */
+export const useConversationsUnread = () =>
+  useQuery({ queryKey: ['conversations', 'unread-count'], queryFn: conversationsService.unreadCount, refetchInterval: 30_000 })
 
 export const useMessages = (id?: string) =>
   useQuery({ queryKey: qk.messages(id ?? ''), queryFn: () => conversationsService.messages(id!), enabled: !!id, refetchInterval: 8_000 })
@@ -107,13 +128,35 @@ export function useSendMessage(id: string) {
   })
 }
 
+/** Plantillas de WhatsApp aprobadas (solo se piden con la ventana de 24 h cerrada). */
+export const useWhatsAppTemplates = (enabled: boolean) =>
+  useQuery({ queryKey: ['whatsapp-templates'], queryFn: conversationsService.templates, enabled, staleTime: 5 * 60_000, retry: false })
+
+export function useSendTemplate(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { name: string; language: string; parameters: string[] }) => conversationsService.sendTemplate(id, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.messages(id) })
+      qc.invalidateQueries({ queryKey: ['conversations'] })
+    },
+  })
+}
+
 export function useMarkRead() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: conversationsService.markRead,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversations'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['conversations'] })
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+    },
   })
 }
+
+/** Insight de IA de un lead: se pide bajo demanda (consume cuota de IA). */
+export const useLeadInsight = (leadId: string, enabled: boolean) =>
+  useQuery({ queryKey: ['lead-insight', leadId], queryFn: () => conversationsService.insight(leadId), enabled, staleTime: 10 * 60_000, retry: false })
 
 export function useToggleConversationAi() {
   const qc = useQueryClient()
@@ -135,7 +178,7 @@ export function useSaveAiSettings() {
 }
 
 /* Clientes */
-export const useCustomers = (params: { search?: string; page?: number; pageSize?: number }) =>
+export const useCustomers = (params: { search?: string; page?: number; pageSize?: number; active?: boolean }) =>
   useQuery({ queryKey: qk.customers(params), queryFn: () => customersService.list(params), placeholderData: keepPreviousData })
 export const useCustomersSummary = () => useQuery({ queryKey: qk.customersSummary, queryFn: customersService.summary })
 export const useCustomer = (id?: string) =>
@@ -144,12 +187,29 @@ export const useCustomerQuotes = (id?: string) =>
   useQuery({ queryKey: qk.customerQuotes(id ?? ''), queryFn: () => customersService.quotes(id!), enabled: !!id })
 export function useCreateCustomer() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: customersService.create, onSuccess: () => qc.invalidateQueries({ queryKey: ['customers'] }) })
+  return useMutation({
+    mutationFn: customersService.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['customers'] })
+      qc.invalidateQueries({ queryKey: qk.customersSummary })
+    },
+  })
+}
+export function useUpdateCustomer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof customersService.update>[1] }) => customersService.update(id, input),
+    onSuccess: (c) => {
+      qc.invalidateQueries({ queryKey: qk.customer(c.id) })
+      qc.invalidateQueries({ queryKey: ['customers'] })
+      qc.invalidateQueries({ queryKey: qk.customersSummary })
+    },
+  })
 }
 
 /* Productos */
 export const useProducts = (params: { search?: string; kind?: string; active?: boolean } = {}) =>
-  useQuery({ queryKey: qk.products(params), queryFn: () => productsService.list(params) })
+  useQuery({ queryKey: qk.products(params), queryFn: () => productsService.list(params), placeholderData: keepPreviousData })
 export function useSaveProduct() {
   const qc = useQueryClient()
   return useMutation({
@@ -160,65 +220,89 @@ export function useSaveProduct() {
 }
 
 /* Cotizaciones */
-export const useQuotes = (params: { search?: string; status?: string; page?: number; pageSize?: number }) =>
+/** Tras cualquier cambio en una cotización: listados, resumen, ficha del cliente y dashboard. */
+function invalidateQuotes(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['quotes'] })
+  qc.invalidateQueries({ queryKey: qk.quoteSummary })
+  qc.invalidateQueries({ queryKey: ['customer-quotes'] })
+  qc.invalidateQueries({ queryKey: ['customer'] })
+  qc.invalidateQueries({ queryKey: qk.dashboard })
+}
+export const useQuotes = (params: { search?: string; status?: string; leadId?: string; clientId?: string; page?: number; pageSize?: number }) =>
   useQuery({ queryKey: qk.quotes(params), queryFn: () => quotesService.list(params), placeholderData: keepPreviousData })
 export const useQuoteSummary = () => useQuery({ queryKey: qk.quoteSummary, queryFn: quotesService.summary })
+/** Leads elegibles para cotizar (selector de Nueva cotización y del modal de IA). */
+export const useQuoteLeads = (params: { search?: string; clientId?: string } = {}) =>
+  useQuery({ queryKey: ['quote-leads', params], queryFn: () => quotesService.leadOptions(params), placeholderData: keepPreviousData })
+/** IVA, vigencia y condiciones por defecto de la empresa activa. */
+export const useQuoteSettings = () => useQuery({ queryKey: ['quote-settings'], queryFn: quotesService.settings, staleTime: 5 * 60_000 })
 export function useCreateAiQuote() {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: quotesService.aiDraft,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quotes'] })
-      qc.invalidateQueries({ queryKey: qk.quoteSummary })
-    },
-  })
+  return useMutation({ mutationFn: quotesService.aiDraft, onSuccess: () => invalidateQuotes(qc) })
 }
 export const useQuote = (id?: string) => useQuery({ queryKey: qk.quote(id ?? ''), queryFn: () => quotesService.get(id!), enabled: !!id })
 export function useCreateQuote() {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: quotesService.create,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quotes'] })
-      qc.invalidateQueries({ queryKey: qk.quoteSummary })
-      qc.invalidateQueries({ queryKey: qk.dashboard })
-    },
-  })
+  return useMutation({ mutationFn: quotesService.create, onSuccess: () => invalidateQuotes(qc) })
 }
 export function useUpdateQuoteStatus() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: QuoteStatus }) => quotesService.updateStatus(id, status),
+    mutationFn: ({ id, status }: { id: string; status: QuoteStatus | ApiQuoteStatus }) => quotesService.updateStatus(id, status),
     onSuccess: (q) => {
       qc.setQueryData(qk.quote(q.id), q)
-      qc.invalidateQueries({ queryKey: ['quotes'] })
-      qc.invalidateQueries({ queryKey: qk.quoteSummary })
+      invalidateQuotes(qc)
     },
   })
+}
+export function useSendQuote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; to?: string; message?: string }) => quotesService.send(id, input),
+    onSuccess: (q) => {
+      qc.setQueryData(qk.quote(q.id), q)
+      invalidateQuotes(qc)
+    },
+  })
+}
+export function useDeleteQuote() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: quotesService.remove, onSuccess: () => invalidateQuotes(qc) })
 }
 
 /* Notas */
 export const useNotes = (params: { leadId?: string; done?: boolean } = {}) =>
   useQuery({ queryKey: qk.notes(params), queryFn: () => notesService.list(params) })
+/** Los seguimientos cambian el "próximo seguimiento" / "último contacto" del lead y la actividad. */
+function invalidateNotes(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['notes'] })
+  qc.invalidateQueries({ queryKey: ['leads'] })
+  qc.invalidateQueries({ queryKey: ['lead'] })
+  qc.invalidateQueries({ queryKey: ['lead-activity'] })
+  qc.invalidateQueries({ queryKey: qk.dashboard })
+}
 export function useCreateNote() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: notesService.create, onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }) })
+  return useMutation({ mutationFn: notesService.create, onSuccess: () => invalidateNotes(qc) })
 }
 export function useUpdateNote() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...input }: { id: string; done?: boolean; body?: string }) => notesService.update(id, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }),
+    mutationFn: ({ id, ...input }: { id: string; done?: boolean; body?: string; followUpAt?: string | null }) => notesService.update(id, input),
+    onSuccess: () => invalidateNotes(qc),
   })
 }
 export function useDeleteNote() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: notesService.remove, onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }) })
+  return useMutation({ mutationFn: notesService.remove, onSuccess: () => invalidateNotes(qc) })
 }
 
 /* Notificaciones */
 export const useNotifications = (kind: NotificationKind | '' = '') =>
   useQuery({ queryKey: qk.notifications(kind), queryFn: () => notificationsService.list({ kind }), refetchInterval: 30_000 })
+/** No leídas (campana). Clave bajo 'notifications' para que se invalide junto con la lista. */
+export const useNotificationsUnread = () =>
+  useQuery({ queryKey: ['notifications', '__unread'], queryFn: notificationsService.unreadCount, refetchInterval: 30_000 })
 export function useMarkAllNotificationsRead() {
   const qc = useQueryClient()
   return useMutation({ mutationFn: notificationsService.markAllRead, onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }) })
@@ -226,4 +310,31 @@ export function useMarkAllNotificationsRead() {
 export function useMarkNotificationRead() {
   const qc = useQueryClient()
   return useMutation({ mutationFn: notificationsService.markRead, onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }) })
+}
+
+/* Búsqueda global (barra superior) */
+export const useGlobalSearch = (q: string) =>
+  useQuery({
+    queryKey: ['search', q],
+    queryFn: () => searchService.search(q),
+    enabled: q.trim().length >= 2,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  })
+
+/* Empresa (Configuración → Empresa y Usuarios) */
+export const useProjectDetail = () => useQuery({ queryKey: ['project-detail'], queryFn: projectService.get })
+export function useUpdateProject() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: projectService.update, onSuccess: (data) => qc.setQueryData(['project-detail'], data) })
+}
+export const useInvitations = (enabled: boolean) =>
+  useQuery({ queryKey: ['invitations'], queryFn: projectService.invitations, enabled, retry: false })
+export function useInvite() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: projectService.invite, onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }) })
+}
+export function useRevokeInvitation() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: projectService.revokeInvitation, onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }) })
 }

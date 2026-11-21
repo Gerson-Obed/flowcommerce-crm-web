@@ -5,6 +5,14 @@ import { LoginPage } from '@/features/auth/LoginPage'
 /** Cada pantalla se carga bajo demanda para mantener liviano el bundle inicial. */
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  /* Pantallas de cuenta (públicas). */
+  { path: '/registro', lazy: async () => ({ Component: (await import('@/features/auth/RegisterPage')).RegisterPage }) },
+  { path: '/olvide-contrasena', lazy: async () => ({ Component: (await import('@/features/auth/ForgotPasswordPage')).ForgotPasswordPage }) },
+  { path: '/restablecer-contrasena', lazy: async () => ({ Component: (await import('@/features/auth/ResetPasswordPage')).ResetPasswordPage }) },
+  { path: '/onboarding', lazy: async () => ({ Component: (await import('@/features/auth/OnboardingPage')).OnboardingPage }) },
+  { path: '/invitacion', lazy: async () => ({ Component: (await import('@/features/auth/InvitationPage')).InvitationPage }) },
+  { path: '/solicitar-acceso', lazy: async () => ({ Component: (await import('@/features/auth/AccessRequestPage')).AccessRequestPage }) },
+  { path: '/auth/callback', lazy: async () => ({ Component: (await import('@/features/auth/AuthCallbackPage')).AuthCallbackPage }) },
   {
     path: '/',
     element: <AppLayout />,
@@ -14,6 +22,7 @@ export const router = createBrowserRouter([
       { path: 'leads/:id', lazy: async () => ({ Component: (await import('@/features/leads/LeadDetailPage')).LeadDetailPage }) },
       { path: 'leads', lazy: async () => ({ Component: (await import('@/features/leads/LeadsPage')).LeadsPage }) },
       { path: 'conversaciones/:id?', lazy: async () => ({ Component: (await import('@/features/inbox/InboxPage')).InboxPage }) },
+      { path: 'asistente', lazy: async () => ({ Component: (await import('@/features/assistant/AssistantPage')).AssistantPage }) },
       { path: 'cotizaciones', lazy: async () => ({ Component: (await import('@/features/quotes/QuotesPage')).QuotesPage }) },
       { path: 'cotizaciones/nueva', lazy: async () => ({ Component: (await import('@/features/quotes/NewQuotePage')).NewQuotePage }) },
       { path: 'cotizaciones/:id', lazy: async () => ({ Component: (await import('@/features/quotes/QuoteDetailPage')).QuoteDetailPage }) },

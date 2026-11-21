@@ -11,11 +11,13 @@ export default defineConfig(({ mode }) => {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },
     server: {
-      port: 5173,
+      // 3001: el puerto que ya conocen la API (CORS_ORIGINS) y Supabase (redirect URLs).
+      port: 3001,
       // Si VITE_API_PROXY está definido, las llamadas a /api se redirigen al backend local.
       proxy: env.VITE_API_PROXY
         ? { '/api': { target: env.VITE_API_PROXY, changeOrigin: true } }
         : undefined,
     },
+    preview: { port: 3001 },
   }
 })
